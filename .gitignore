@@ -1,0 +1,17 @@
+# Portable JDKs - large binaries, re-fetch with the commands in CLAUDE.md
+/tools/
+
+# MotiveWave's own copyrighted docs/SDK/sample project - not ours to redistribute.
+# Re-fetch with the curl commands recorded in docs/dynamic/findings.md.
+/docs/static/
+
+# Compiled output - regenerate from experiments/src/
+/experiments/build/
+
+# Real market data pulled through a licensed Rithmic subscription - not ours
+# to redistribute, and not useful without the live feed anyway.
+/experiments/logs/
+
+# Real account/broker credentials - never committed. .examples.env (tracked)
+# documents the shape; only the user edits .env, per CLAUDE.md.
+.env
