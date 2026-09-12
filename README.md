@@ -1,5 +1,15 @@
 # motivewave
 
+**This repo is an experimentation lab, not a trading system.** Everything
+in it so far is throwaway diagnostic code used to empirically verify what
+MotiveWave's SDK actually delivers (tick/DOM data quality, strategy
+lifecycle behavior, order-safety gotchas) before any real design work
+starts. Nothing here places trades unattended, nothing here is a strategy
+meant to be run, and `app/` — where the real system would eventually live —
+is still empty. Treat everything under `experiments/` as scratch work whose
+value is the finding it produced (see `docs/dynamic/findings.md`), not the
+code itself.
+
 Turning discretionary order-flow trading judgment (market structure, volume
 profile, footprint, DOM, big trades) into an automated forward-testing
 system built on MotiveWave's SDK. Same methodology as
