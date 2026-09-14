@@ -359,3 +359,56 @@ directly). Same convention as FLOW's findings.md.
   local receipt). Not investigated further here since it isn't part of
   Q-01; flag it before trusting any absolute feed-latency number D-23
   computes from these two clocks.
+
+- **[LIVE]** Q-03 answered, with a number much larger than the top-of-book
+  measurement alone suggested. Two separate live captures on `@GC`:
+
+  **Capture 1 — top-of-book only, ~54 minutes** (`TickDomLogger`, existing
+  20-update detail cap already exhausted before this window started, so
+  it's pure top-of-book for the whole window): 10,793 ticks and 154,774
+  DOM updates in 3,247s, scaled to a full hour → **~11,966 ticks/hr,
+  ~171,600 DOM updates/hr, ~28.0 MB/hr raw, ~1.35 MB/hr gzip -9 (~20.7x
+  ratio)**.
+
+  **Capture 2 — full per-order detail, self-bounded to 6,000 updates**
+  (`DomDetailCapture.java`, new): 6,000 DOM updates in 183.18s (32.76
+  updates/sec in this window) produced **16,481,360 `DOMOrder` entries**
+  (avg **2,747.6 orders/update**, close to and superseding the original
+  2026-09-11 finding's 20-update sample of ~2,549/update — this is a
+  300x-larger sample) and 10,673,929 bid/ask row lines (73.7% non-empty).
+  Raw size **1,102,379,298 bytes (1.10 GB)** → 183,730 bytes/update.
+  Gzip -6: **136,040,021 bytes (136.0 MB)** → only **~8.10x** compression
+  (far worse than top-of-book's ~20.7x, because individual exchange order
+  IDs are high-entropy and don't repeat/compress well).
+
+  **Extrapolated using Capture 1's hourly update rate (171,600/hr, the
+  more statistically robust longer sample) applied to Capture 2's
+  per-update density:** full per-order DOM detail would run **~31.5
+  GB/hour raw, ~3.89 GB/hour gzipped**. For D-07's 2–3 day raw retention
+  window, that's **~1.5–2.3 TB raw, ~187–280 GB gzipped** — roughly
+  **1,100x (raw) to 2,900x (gzip)** larger than top-of-book-only.
+
+  **This measurement used naive full-snapshot-per-update logging** — every
+  DOM update re-logs the *entire* book, including every order still
+  resting unchanged from the previous update (`update(DOM dom)` hands back
+  the full current book each time, not a delta). Order books change
+  incrementally between consecutive updates far more often than they churn
+  completely, so a **delta/incremental encoding** (log only orders
+  added/removed/modified since the last update, not the whole book) would
+  very plausibly cut this substantially — genuinely unmeasured here,
+  flagged as the natural follow-up if full per-order retention is ever
+  pursued, rather than assumed.
+
+  **Consequence for D-07/D-15, not decided here:** compressed JSONL is
+  clearly sufficient for ticks + top-of-book DOM (the ~97 MB/3-days
+  figure). It is **not** viable at anywhere near that retention window for
+  full per-order snapshot detail without either a much shorter retention
+  window, a delta encoding, or accepting that the raw journal's DOM tier
+  stays top-of-book-only (D-12's derived-views principle already applies
+  to what *strategies* see; this is now also a live question for what the
+  *raw journal* itself should retain). D-22's forward-only feature class
+  (order resting time, liquidity-pull frequency) is the one part of the
+  design that plausibly needs order-ID-level tracking at all — worth
+  checking whether that can be satisfied by a narrower/shorter capture
+  than a general 2-3 day raw retention policy before committing to either
+  extreme.
