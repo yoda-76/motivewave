@@ -12,6 +12,7 @@ import com.motivewave.platform.sdk.common.Instrument;
 import com.motivewave.platform.sdk.common.SwingPoint;
 import com.motivewave.platform.sdk.common.Tick;
 import com.motivewave.platform.sdk.common.TickOperation;
+import com.motivewave.platform.sdk.draw.Box;
 import com.motivewave.platform.sdk.draw.Line;
 import com.motivewave.platform.sdk.profile.VolumeProfile;
 import com.motivewave.platform.sdk.profile.VolumeRow;
@@ -86,6 +87,14 @@ public class SdkCapabilityProbe extends Study implements DOMListener {
   private final AtomicLong sessionProcessingNanos = new AtomicLong(0);
   private volatile long baselineHeapBytes = -1;
   private volatile long sessionStartTime;
+
+  // Redraw throttling: driven from onTick/update(DOM), both real
+  // MotiveWave callback threads (per the figure-drawing findings above),
+  // not a spawned timer thread.
+  private static final long REDRAW_INTERVAL_MS = 1000;
+  private static final int LVN_SENSITIVITY = 1;
+  private static final java.awt.Color LVN_FILL = new java.awt.Color(255, 140, 0, 70); // translucent orange
+  private volatile long lastRedrawTime = 0;
 
   // E-4: bar-scoped footprint profile
   private volatile VolumeProfile barProfile;
@@ -217,6 +226,15 @@ public class SdkCapabilityProbe extends Study implements DOMListener {
         logLine("E5_FILTER_EXCEPTION " + t);
       }
     }
+
+    maybeRedraw();
+  }
+
+  private void maybeRedraw() {
+    long now = System.currentTimeMillis();
+    if (now - lastRedrawTime < REDRAW_INTERVAL_MS) return;
+    lastRedrawTime = now;
+    redrawFigures();
   }
 
   private void onBigTrade(Tick tick) {
@@ -243,25 +261,11 @@ public class SdkCapabilityProbe extends Study implements DOMListener {
 
   @Override
   public void onBarClose(DataContext ctx) {
-    // E-2: draw session POC/VAH/VAL here, not from the heartbeat thread --
-    // every real published study that draws figures does so from inside a
-    // MotiveWave-invoked callback (calculateValues/onBarUpdate), never
-    // from an independently spawned thread. onBarClose is that same kind
-    // of callback in this class already (used for E-4/E-7 below without
-    // any threading issue), so this reuses a proven-safe call site rather
-    // than introducing a new one via invokeLater.
-    VolumeProfile sp = sessionProfile;
-    if (sp != null) {
-      try {
-        VolumeRow poc = sp.getPOC();
-        int[] va = sp.getValueArea(VALUE_AREA_PCT);
-        if (poc != null && va != null) {
-          drawSessionLines(poc.getRowPrice(), sp.getVAHigh(va), sp.getVALow(va));
-        }
-      } catch (Throwable t) {
-        logLine("E2_DRAW_SNAPSHOT_EXCEPTION " + t);
-      }
-    }
+    // E-2 drawing moved to maybeRedraw(), throttled from onTick/update(DOM)
+    // at REDRAW_INTERVAL_MS -- see that method. onBarClose is still a
+    // proven-safe callback for figure updates (confirmed live), just no
+    // longer the trigger for this one now that per-second updates are
+    // wanted rather than per-bar.
 
     // E-4: finalize the closing bar's footprint profile
     VolumeProfile closingBar = barProfile;
@@ -376,7 +380,7 @@ public class SdkCapabilityProbe extends Study implements DOMListener {
               sp.getRows() == null ? 0 : sp.getRows().size(),
               poc == null ? "null" : String.format("%.4f", poc.getRowPrice()),
               vaHigh, vaLow, sp.getTotalVolume(), sp.getTotalDelta()));
-          // drawing happens from onBarClose, not here -- see that method for why
+          // drawing happens from maybeRedraw()/redrawFigures(), triggered from onTick, not here
         } catch (Throwable t) {
           logLine("E2_SNAPSHOT_EXCEPTION " + t);
         }
@@ -404,29 +408,59 @@ public class SdkCapabilityProbe extends Study implements DOMListener {
     }
   }
 
-  // E-2, drawn on the chart so it can be visually compared against the
+  // E-2/LVN, drawn on the chart so it can be visually compared against the
   // built-in Volume Profile study directly, instead of matching log
-  // timestamps by hand. Re-drawn every heartbeat under a fixed tag so old
-  // lines are replaced, not accumulated.
+  // timestamps by hand. Redrawn at most once per REDRAW_INTERVAL_MS,
+  // triggered from onTick (see maybeRedraw()) -- a MotiveWave-invoked
+  // callback thread, confirmed safe for figure updates live. NOT called
+  // from update(DOM): that runs on the platform's DOM feed thread, not
+  // the study calculation thread (same reason D-10 in FLOW_V2 funnels DOM
+  // events through a sequencer rather than trusting that thread
+  // directly), so it's not a safe call site for figures either.
   //
-  // Called from onBarClose (a MotiveWave-invoked callback), not from the
-  // heartbeat thread -- an invokeLater-marshaled call from the heartbeat
-  // thread was tried first and still rendered nothing, zero exceptions
-  // either way. Matches the pattern actually used by every real published
-  // study checked in MotiveWave/motivewave-studies (LinearRegression,
-  // PriceLabels, SwingPoints, DarvasBox, ZigZag): plain clearFigures()/
-  // addFigure(Figure) -- NOT the tagged addFigure(String, Figure)
-  // overload used in the first two attempts, which has no confirmed
-  // precedent anywhere in MotiveWave's own source -- called synchronously
-  // from inside calculateValues()/onBarUpdate(), with no notifyRedraw()
-  // call in any of them.
-  private void drawSessionLines(float poc, float vaHigh, float vaLow) {
+  // Uses the plain clearFigures()/addFigure(Figure) overloads -- NOT the
+  // tagged addFigure(String, Figure) overload tried first, which has no
+  // confirmed precedent anywhere in MotiveWave's own published studies --
+  // matching LinearRegression/PriceLabels/SwingPoints/DarvasBox/ZigZag's
+  // pattern exactly. clearFigures() with no tag clears everything this
+  // study has drawn, so lines and LVN boxes are redrawn together each
+  // cycle rather than accumulating.
+  private void redrawFigures() {
+    VolumeProfile sp = sessionProfile;
+    if (sp == null) return;
     try {
+      VolumeRow poc = sp.getPOC();
+      int[] va = sp.getValueArea(VALUE_AREA_PCT);
+      List<VolumeRow> rows = sp.getRows();
+      int[] lvns = sp.getLVNs(LVN_SENSITIVITY);
+      logLine("LVN_RAW indices=" + (lvns == null ? "null" : java.util.Arrays.toString(lvns))
+          + " rowCount=" + (rows == null ? 0 : rows.size()));
+
       clearFigures();
       long now = System.currentTimeMillis();
-      addFigure(makeLine(sessionStartTime, poc, now, poc, Color.YELLOW, "OUR POC " + poc));
-      addFigure(makeLine(sessionStartTime, vaHigh, now, vaHigh, Color.CYAN, "OUR VAH " + vaHigh));
-      addFigure(makeLine(sessionStartTime, vaLow, now, vaLow, Color.CYAN, "OUR VAL " + vaLow));
+
+      if (poc != null) {
+        addFigure(makeLine(sessionStartTime, poc.getRowPrice(), now, poc.getRowPrice(), Color.YELLOW, "OUR POC " + poc.getRowPrice()));
+      }
+      if (va != null) {
+        float vaHigh = sp.getVAHigh(va);
+        float vaLow = sp.getVALow(va);
+        addFigure(makeLine(sessionStartTime, vaHigh, now, vaHigh, Color.CYAN, "OUR VAH " + vaHigh));
+        addFigure(makeLine(sessionStartTime, vaLow, now, vaLow, Color.CYAN, "OUR VAL " + vaLow));
+      }
+      if (lvns != null && rows != null) {
+        for (int idx : lvns) {
+          if (idx < 0 || idx >= rows.size()) {
+            logLine("LVN_INDEX_OUT_OF_RANGE idx=" + idx + " rowCount=" + rows.size());
+            continue;
+          }
+          VolumeRow row = rows.get(idx);
+          Box box = new Box(sessionStartTime, row.getStartPrice(), now, row.getEndPrice());
+          box.setFillColor(LVN_FILL);
+          box.setLineColor(LVN_FILL);
+          addFigure(box);
+        }
+      }
     } catch (Throwable t) {
       logLine("E2_DRAW_EXCEPTION " + t);
     }
