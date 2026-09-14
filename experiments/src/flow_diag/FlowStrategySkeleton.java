@@ -35,6 +35,18 @@ import java.util.concurrent.atomic.AtomicLong;
  * therefore explicitly overridden below with a log-only body, so there is no
  * inherited default left unaccounted for.
  *
+ * 2026-09-14 fix: `autoEntry` had been left `true` (contradicting this
+ * comment, which already claimed it was `false` -- a stale/incorrect
+ * comment, now corrected in code) and `supportsEnterOnActivate` /
+ * `supportsCloseOnDeactivate` had been left unset, which defaults BOTH to
+ * `true` in StudyHeader. "Enter On Activate" places a position as a
+ * platform-level side effect of clicking Activate, independent of this
+ * file's Java code -- discovered live on a sibling probe
+ * (`ContextRetentionProbe.java`) when activation prompted for a Long/Short
+ * direction choice before allowing activation. All three flags are now
+ * explicitly `false`, same rationale as the `onEnterNow` no-op below: an
+ * unset default is not a safe default.
+ *
  * Purpose: prove the Strategy lifecycle (onActivate/onBarClose/onDeactivate)
  * fires correctly and that OrderContext account state (position, cash,
  * unrealized PnL) is readable, while combining bar-level OHLC (market
@@ -51,9 +63,11 @@ import java.util.concurrent.atomic.AtomicLong;
     menu = "FLOW",
     overlay = true,
     strategy = true,
-    autoEntry = true,
+    autoEntry = false,
     manualEntry = false,
     supportsPositionType = false,
+    supportsEnterOnActivate = false,
+    supportsCloseOnDeactivate = false,
     requiresBarUpdates = true,
     supportsBarUpdates = true,
     barUpdatesByDefault = true)

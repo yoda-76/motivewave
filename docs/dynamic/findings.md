@@ -175,3 +175,80 @@ directly). Same convention as FLOW's findings.md.
   impossible regardless of which button gets clicked on any control box.
   Not yet enabled as of 2026-09-12 — next step before any further strategy
   activation, per D-06.
+
+  **Note 2026-09-14:** `docs/dynamic/decisions.md` D-06 records this as
+  **satisfied 2026-09-12** (Sim Trade Only enabled, confirmed visually via
+  the Strategy Control Box account selector reading "simulated"). This
+  paragraph is left as originally written rather than silently edited: it
+  was true when captured, D-06 is the current status. Re-confirm the
+  checkbox and account selector live before trusting either, since neither
+  a doc entry nor a past decision substitutes for the in-the-moment check
+  the hard rule in `CLAUDE.md` requires.
+
+## 2026-09-14
+
+- **[DOC]** No public SDK API lets one `Study` obtain a handle to another
+  study instance on the same chart — `Study`, `DataContext`, and
+  `DataSeries` (per their Javadoc method lists) expose no `getStudies()`,
+  `getStudy(id)`, or equivalent. The mechanism that **does** exist is
+  **Export Values**: a study declares
+  `desc.exportValue(new ValueDescriptor(key, label, dependentInputs))` in
+  `initialize()`, storing computed values on the shared `DataSeries` under
+  that key; MotiveWave's Add-Study dialog can then offer an already-placed
+  study's exported values as a "Study"-type input to a newly-added study.
+  This is GUI-wired per study-to-study connection, not a dynamic runtime
+  lookup by arbitrary code (source:
+  `pages/user-guide_sdk-programming-guide_overlay-example.md`,
+  `pages/user-guide_sdk-programming-guide_study-plot-example.md`,
+  `pages/user-guide_sdk-programming-guide_fundamental-classes.md`).
+
+- **[DOC]** `com.motivewave.platform.sdk.profile.SummaryProfile` /
+  `VolumeProfile` (the SDK's own profile data classes, not `Study`
+  subclasses) expose exactly the getters a volume-profile feature needs:
+  `getPOC()`, `getPOCMidpoint()`, `getVAHigh()`, `getVALow()`,
+  `getValueArea()`, `getRows()` (→ `VolumeRow.isPOC()/getVolume()/
+  getDelta()/isAskImbalance()/isBidImbalance()`), `getHVNs()`/`getLVNs()`.
+  These are plain data objects usable by our own `CustomVolumeProfile`
+  (D-26) directly. Separately, `com.motivewave.platform.sdk.profile.
+  VolumeProfileStudy` — the SDK base class MotiveWave's own built-in Volume
+  Profile study is presumably built on — stores its computed profile in a
+  **protected** nested class (`VPSummary`), with no public getter visible
+  in its Javadoc method list. So even if the built-in study is literally
+  this class, its instance state isn't reachable by field/method access
+  from outside.
+
+  **Net for Q-08:** whether `BuiltInVolumeProfile` (D-26) can read the
+  shipped built-in study's POC/VAH/VAL automatically depends entirely on
+  whether that built-in study happens to declare an Export Value for them
+  — undocumented either way, since built-in studies' own `initialize()`
+  source isn't in the SDK docs. Not resolvable from documentation alone;
+  needs a live check: place the built-in Volume Profile study on a chart,
+  then open the Add-Study dialog for a new study and check whether its
+  "Study" input options include a Volume Profile POC/VAH/VAL entry. No
+  code experiment needed for this half — it's a GUI check. If it isn't
+  exported, D-26's stated fallback (journal our own values, compare to the
+  chart by hand) applies as already decided.
+
+- **[LIVE]** `StudyHeader.supportsEnterOnActivate` and
+  `supportsCloseOnDeactivate` **both default to `true`** when left unset —
+  confirmed live, not just from the Javadoc default text. Activating
+  `ContextRetentionProbe.java` (deployed with neither flag set) prompted
+  for a Long/Short direction choice *before allowing activation at all*,
+  even though the class contains zero order-placement code anywhere and
+  has `autoEntry=false`/`manualEntry=false`. "Enter On Activate" is a
+  **platform-level trading option** — per
+  `pages/user-guide_strategy-back-testing_strategies.md`, "If enabled the
+  strategy will create an initial position when you activate the
+  strategy" — that submits an entry order as a side effect of clicking
+  Activate, entirely independent of the strategy class's own Java code.
+  This is the same class of gap as the 2026-09-11 `onEnterNow` incident:
+  an unset default is not a safe default, this time at the StudyHeader
+  capability-flag level rather than the inherited-method level. Both
+  `FlowStrategySkeleton.java` (pre-existing, previously activated in the
+  2026-09-11/12 sessions without this flag set — no position was opened
+  then, per that session's logged `pos=0` throughout, but the exposure was
+  present) and `ContextRetentionProbe.java` (new) are fixed to explicitly
+  set both flags `false`. **Any future diagnostic `Strategy` class must
+  set `supportsEnterOnActivate=false, supportsCloseOnDeactivate=false`
+  explicitly** — add this to the checklist alongside the no-op
+  `OrderContext` hook overrides.
