@@ -332,3 +332,30 @@ directly). Same convention as FLOW's findings.md.
   this menu. Net: `BuiltInVolumeProfile` (D-26) is **not** automatic.
   D-26's stated fallback applies — journal `CustomVolumeProfile`'s own
   POC/VAH/VAL on a cadence and compare against the chart by hand.
+
+- **[LIVE]** Q-01 answered — **ticks belonging to a bar reliably arrive
+  before `onBarClose` fires for it; no case of a bar closing with its own
+  ticks still in flight, on this feed.** `OrderingProbe.java` ran on a
+  live `@GC` 1-min chart and logged a monotonic sequence number on every
+  `onTick` and every `onBarClose`. Across 2,738 ticks and 12 bar closes:
+  for every bar close, every tick received afterward (by sequence number)
+  had an exchange timestamp (`tick.getTime()`) *after* that close's
+  receipt time — zero violations. In other words, nothing arrived late
+  carrying a timestamp that should have belonged to the bar that already
+  closed. Less consequential than it would have been pre-D-10 (the
+  sequencer records actual arrival order regardless of what this answer
+  turned out to be), but confirms a bar-close-triggered aggregate can be
+  trusted at the moment it fires, on this connection.
+
+  **Secondary observation, unrelated to Q-01 but worth keeping for D-23's
+  feed-latency measurement:** `recvTime` (`System.currentTimeMillis()` at
+  receipt) was consistently *before* `tickTime` (`tick.getTime()`) by an
+  average of ~668ms (range 30–710ms) across the whole run — i.e. the
+  gap this codebase would compute as "feed latency" came out negative.
+  Two explanations not yet distinguished: local-machine clock running
+  behind the exchange/feed's clock, or `tick.getTime()` not being a pure
+  exchange-side timestamp (e.g. including some processing/queueing time
+  on MotiveWave's or the broker's side that pushes it later than our
+  local receipt). Not investigated further here since it isn't part of
+  Q-01; flag it before trusting any absolute feed-latency number D-23
+  computes from these two clocks.
