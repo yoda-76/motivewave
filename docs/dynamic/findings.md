@@ -412,3 +412,89 @@ directly). Same convention as FLOW's findings.md.
   checking whether that can be satisfied by a narrower/shorter capture
   than a general 2-3 day raw retention policy before committing to either
   extreme.
+
+- **[LIVE]** E-6 (sdk-capability-findings.md) resolved by jar inspection
+  alone, no code needed: `jar tf mwave_sdk.jar` shows **no
+  `com.motivewave.platform.common` package at all**, in either that
+  namespace or under `sdk.common.Enums`. `VAMethod` does not exist
+  anywhere in our jar. Confirmed further via `javap` on `TPOProfile`: its
+  real bytecode signature references `getVolumeValueArea(double,
+  com.motivewave.platform.common.Enums$VAMethod)` and the equivalent
+  `getTimeValueArea` overload — so the type is referenced by the SDK's own
+  compiled classes but isn't distributed with the jar, making those
+  overloads permanently uncallable from our code. Only `getValueArea(double)`
+  (no method parameter) is usable, on `VolumeProfile` or `TPOProfile`.
+
+- **[LIVE]** E-1 (SDK signature sweep) — mostly clean, one real mismatch
+  found. `SdkSignatureSweep.java` compiles against our actual
+  `mwave_sdk.jar` for every signature in §2 of `sdk-capability-findings.md`
+  **except** `TPOProfile`'s constructor: Javadoc says
+  `(long, long, Instrument, int)`, `javap` on our actual jar shows
+  `(long, long, long, Instrument, int, int, int, boolean)` — confirms T-6
+  concretely for at least one class. Not pursued further since TPO is out
+  of scope. Everything else (`VolumeProfile`, `SummaryProfile`,
+  `VolumeRow`, `AggregateFilter`, `DataSeries.calcSwingPoints`,
+  `SwingPoint`, `Instrument.getDOMHistory()`/`getLatestDOMHistory()`,
+  `DOMSnapshot`) compiled clean. **Not yet run against a live instrument**
+  (deployed, not yet attached to a chart) — compiling confirms the
+  signatures exist, but not that they behave sanely at runtime; that's
+  still pending.
+
+- **[LIVE]** E-10 (studies source bundle) — found a better source than the
+  Google Drive link the forum thread names: the official **`MotiveWave/
+  motivewave-studies`** GitHub repo (`https://github.com/MotiveWave/
+  motivewave-studies`, GPL v3, 339 `.java` files, last commit 2025-08-23),
+  reached via `awesome-motivewave-studies`'s pointer to the real org repo.
+  Git-clonable, versioned, far more usable than an unversioned Drive
+  download. Findings from inventorying it, more consequential than
+  expected:
+
+  1. **VWAP.java exists under `ma/`, is genuinely tick-weighted (not bar-
+     approximated).** `VWAPCalculator implements TickOperation`, fed via
+     `instr.forEachTick(...)`, accumulates `totalPrice += tick.getPrice()
+     * tick.getVolumeAsFloat()` per tick — this resolves D-22's open VWAP
+     caveat in our favor: the reference implementation is true tick VWAP,
+     not typical-price-per-bar. Its standard-deviation bands cite a
+     specific published formula (Sierra Chart's site) worth reusing
+     alongside the mean calculation.
+  2. **But it cannot be compiled as-is against our public SDK jar.** It
+     casts to `com.motivewave.platform.ui.draw.component.study.
+     DataSeriesImpl` — confirmed via `jar tf` to not exist anywhere in
+     `mwave_sdk.jar` (that whole `platform.ui.*` namespace is absent).
+     "Adapt their code" (the document's own conclusion) means **port the
+     algorithm**, not drop in the file — the internal-class dependency
+     has to be designed around.
+  3. **No footprint, big-trades, heatmap, Order Heatmap, or DOM Power
+     source anywhere in the 339 files** (checked by filename and by
+     full-text grep for "footprint"/"imbalance"/"big.?trade"/"heatmap").
+     Confirms these are not open-sourced — matches the document's own
+     2023-forum-thread caveat about Big Trades being missing, generalized
+     to the whole order-flow-analysis family. No reference implementation
+     is coming from this source for E-4 or E-5's imbalance/big-trade
+     logic; those experiments are on their own.
+  4. **Bigger finding: `com.motivewave.platform.sdk.profile.*`
+     (`VolumeProfile`, `VolumeRow`, `SummaryProfile`, `TPOProfile`) has
+     ZERO usage anywhere in this entire 339-file repo** — confirmed by
+     `grep -rl` for the import across the whole tree, zero hits. The
+     actual official `DailyVolumeProfile.java` study does **not** use
+     `sdk.profile.VolumeProfile` at all — it computes its own bar-based
+     (not tick-fed) volume-at-price binning with its own `VolumeBar`/
+     `VolumeLegend` `Figure` classes, no `onTick` override. This weakens
+     the document's §2.1/§2.2/§2.4 confidence (all tagged `[DOC]`,
+     compiles per E-1, but now confirmed **unused by MotiveWave's own
+     published studies**) — there is no reference implementation showing
+     a safe session-scoped usage pattern, which is exactly what E-3 was
+     going to need to lean on for the T-1 memory question. E-2/E-3/E-4 now
+     carry more weight: they're not confirming a documented-and-used
+     pattern, they're the *first* real-world exercise of this class either
+     way.
+  5. **`AggregateFilter` also has zero usage anywhere in the repo** — same
+     gap, same consequence for E-5.
+  6. **`calcSwingPoints`/`SwingPoint` DOES have real usage** — 4 studies
+     (`SwingPoints.java`, `AutoTrendLine.java`, `PriceLabels.java`,
+     `williams/Fractal.java`). `SwingPoints.java` calls the simple
+     single-`int`-strength overload (`series.calcSwingPoints(strength)`,
+     `strength` from a user setting) — matches what E-1 already compiled
+     and gives real precedent that this is the intended, supported call
+     shape. This is the one class in the audit that comes out of E-10
+     *more* confident, not less.
