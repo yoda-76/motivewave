@@ -106,6 +106,7 @@ public class SdkCapabilityProbe extends Study implements DOMListener {
   private volatile long lastDomUpdateTime;
 
   private volatile ScheduledExecutorService heartbeat;
+  private final int instanceId = System.identityHashCode(this);
 
   @Override
   public void initialize(Defaults defaults) {
@@ -114,11 +115,36 @@ public class SdkCapabilityProbe extends Study implements DOMListener {
     try {
       log = new PrintWriter(new FileWriter(LOG_FILE, true));
       log.println("# session start " + System.currentTimeMillis()
+          + " instance=" + instanceId
           + " valueAreaPct=" + VALUE_AREA_PCT + " rangeTicks=" + RANGE_TICKS
           + " heapGuardBytes=" + HEAP_GUARD_BYTES);
       log.flush();
     } catch (IOException e) {
       error("FLOW_DIAG: failed to open sdk capability probe log: " + e.getMessage());
+    }
+  }
+
+  // Confirmed live: removing this study from the chart does NOT stop
+  // onTick/DOMListener callbacks or the heartbeat thread on its own --
+  // destroy() is the documented place to release resources, and without
+  // this override a "removed" instance keeps running forever as a
+  // zombie, logging stale data interleaved with whatever instance
+  // replaced it. Discovered by seeing identical VolumeProfile readings
+  // (rows=50 totalVol=555.0, unchanged) six minutes apart in the log.
+  @Override
+  public void destroy() {
+    logLine("DESTROY instance=" + instanceId);
+    if (heartbeat != null) {
+      heartbeat.shutdownNow();
+      heartbeat = null;
+    }
+    if (instrument != null) {
+      instrument.removeListener((DOMListener) this);
+    }
+    if (log != null) {
+      log.flush();
+      log.close();
+      log = null;
     }
   }
 
@@ -392,7 +418,7 @@ public class SdkCapabilityProbe extends Study implements DOMListener {
 
   private void logLine(String s) {
     if (log != null) {
-      log.println(System.currentTimeMillis() + " " + s);
+      log.println(System.currentTimeMillis() + " inst=" + instanceId + " " + s);
       log.flush();
     }
   }

@@ -504,3 +504,37 @@ directly). Same convention as FLOW's findings.md.
      and gives real precedent that this is the intended, supported call
      shape. This is the one class in the audit that comes out of E-10
      *more* confident, not less.
+
+- **[LIVE]** Two more mechanics gotchas found while debugging why E-2's
+  chart lines weren't appearing:
+
+  1. **`addFigure()` does not trigger a repaint by itself** —
+     `notifyRedraw()` must be called explicitly afterward (its Javadoc:
+     "Sends a notification that the study needs to be redrawn"). Wrapping
+     the clear+add sequence in `beginFigureUpdate()`/`endFigureUpdate()`
+     is the idiomatic batching pattern for multiple figure changes.
+  2. **Removing a study from the chart does not stop its background
+     threads or unregister its listeners on its own.** `destroy()` is the
+     documented hook for releasing resources ("called when the study is
+     being disposed") but is easy to forget on a diagnostic study built
+     around a `ScheduledExecutorService` heartbeat, same pattern as
+     `ContextRetentionProbe.java`'s poller. Without overriding it, a
+     "removed" instance keeps running as a **zombie** — its
+     `DOMListener`/tick callbacks may stop (unclear which; not fully
+     isolated), but the heartbeat thread keeps firing on its own schedule
+     forever, logging stale/frozen data (a `VolumeProfile` snapshot that
+     stopped receiving ticks reports the same `rows`/`totalVol` on every
+     heartbeat) interleaved with whatever instance replaced it in the
+     same shared log file. Found by noticing two heartbeat lines six
+     minutes apart with byte-identical `VolumeProfile` readings.
+     `SdkCapabilityProbe.java` now overrides `destroy()` to shut down the
+     heartbeat, remove the DOM listener, and close the log writer; every
+     log line is also now tagged with `System.identityHashCode(this)` so
+     a live vs. zombie instance can be told apart on sight going forward.
+     **Any future diagnostic study with a background thread or a
+     listener registration should do the same** — add this to the
+     checklist alongside the `OrderContext` hook and `autoEntry`/
+     `manualEntry` items already there. `ContextRetentionProbe.java`
+     likely has the same latent gap (its poller is stopped in
+     `onDeactivate`, not `destroy`) — not fixed here since that probe's
+     work (Q-02a) is already done, but worth fixing before reusing it.
