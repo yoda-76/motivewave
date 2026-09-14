@@ -538,3 +538,50 @@ directly). Same convention as FLOW's findings.md.
      likely has the same latent gap (its poller is stopped in
      `onDeactivate`, not `destroy`) — not fixed here since that probe's
      work (Q-02a) is already done, but worth fixing before reusing it.
+
+- **[LIVE]** **Confirmed working: drawing custom figures (`Line`) on the
+  chart via `addFigure`.** Took three attempts to get right — recorded in
+  full since none of it is documented and all of it is easy to
+  re-break:
+  1. First attempt: tagged `clearFigures("tag")`/`addFigure("tag",
+     figure)`, called from the heartbeat thread, no `notifyRedraw()`.
+     Nothing rendered, zero exceptions.
+  2. Added `notifyRedraw()` (its Javadoc: "sends a notification that the
+     study needs to be redrawn") plus `beginFigureUpdate()`/
+     `endFigureUpdate()` batching. Still nothing, zero exceptions.
+  3. Marshaled the same tagged calls onto the Swing EDT via
+     `SwingUtilities.invokeLater()`, on the theory that MotiveWave's UI is
+     Swing-based and a background thread touching figures is a silent EDT
+     violation. Still nothing, zero exceptions.
+  4. **What actually worked:** checked real usage in every published
+     study that draws figures in `MotiveWave/motivewave-studies`
+     (`LinearRegression.java`, `PriceLabels.java`, `SwingPoints.java`,
+     `DarvasBox.java`, `ZigZag.java`). All five, with no exception, use
+     the **untagged** `clearFigures()`/`addFigure(Figure)` overloads —
+     never the tagged `addFigure(String, Figure)` overload attempted in
+     (1)-(3), which has **zero precedent anywhere in MotiveWave's own
+     source** — called **synchronously from inside a MotiveWave-invoked
+     callback** (`calculateValues()`/`onBarUpdate()`), never from an
+     independently spawned thread, and **none of them call
+     `notifyRedraw()` at all**. Switching to the untagged overloads,
+     called from `onBarClose(DataContext)` (already a proven-working
+     MotiveWave callback in this same class), worked immediately.
+  **Takeaway for next time: match a confirmed-working real example
+  exactly before trying to reason about the SDK's threading/notification
+  model from Javadoc alone** — the Javadoc-described mechanism
+  (`notifyRedraw()`) and the sensible-sounding threading fix (EDT
+  marshaling) were both dead ends; only the untagged-overload,
+  synchronous-callback pattern actually used by MotiveWave's own
+  developers worked, and there was no way to derive that from
+  documentation.
+
+  **Separately, re-confirms the destroy()/zombie-instance finding above
+  is not fully solved by that fix alone**: even after adding the
+  `destroy()` override, three instances (`179008115`, `371965593`,
+  `569967082`) were observed logging concurrently with different session
+  start times and different `VolumeProfile` readings, evidently from
+  being re-added without a clean removal each time rather than from
+  `destroy()` failing to fire. Practical implication: **always remove
+  every existing instance of a diagnostic study before re-adding it**,
+  and check the log for multiple concurrently-active instance IDs before
+  trusting any single reading as "the" current value.
