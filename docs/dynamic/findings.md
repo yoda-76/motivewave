@@ -252,3 +252,65 @@ directly). Same convention as FLOW's findings.md.
   set `supportsEnterOnActivate=false, supportsCloseOnDeactivate=false`
   explicitly** — add this to the checklist alongside the no-op
   `OrderContext` hook overrides.
+
+- **[LIVE]** **`autoEntry=false` combined with `manualEntry=false` is an
+  unsupported StudyHeader combination — it produces a dead-end "Please
+  Choose Long or Short" dialog with no actual chooser, blocking activation
+  entirely.** Full trail, so this doesn't need re-discovering:
+  1. Both new diagnostic strategies were first written with `autoEntry=
+     false, manualEntry=false` (reasoning: neither entry mode should be
+     needed for a pure logging probe). Activating either produced a
+     modal titled "Choose Long/Short" containing only the text "Please
+     Choose Long or Short." and an OK button — no actual Long/Short
+     buttons anywhere in it, and no other UI element to set a direction.
+     Confirmed via screenshot, not assumption.
+  2. First hypothesis: `supportsPositionType=false` (already set) was
+     hiding the only UI to choose Position Type, and MotiveWave's
+     activation check demands one unconditionally. Fix tried: set
+     `supportsPositionType=true`. **This did NOT fix it** — a Position
+     Type dropdown did appear in the Add-Study dialog (defaulting to
+     "Long"), and it could be explicitly set to "Long" before adding,
+     but Activate still produced the identical dead-end dialog. Confirmed
+     via screenshot.
+  3. Root cause, found by comparing against `FlowStrategySkeleton.java`'s
+     history: that file had `autoEntry=true` in its **original,
+     already-proven-safe** version (a prior full session logged `pos=0`/
+     flat cash throughout, `ACTIVATE` through `DEACTIVATE`) — the file's
+     own comment claimed `autoEntry` was `false`, which was wrong, and an
+     earlier fix pass in this same session "corrected" the code to match
+     the wrong comment, silently introducing this regression. Reverting
+     to `autoEntry=true` on both strategies (keeping `manualEntry=false`,
+     `supportsPositionType=false`, i.e. its default) fixed it — both
+     activated with **no dialog at all**.
+  4. **Standing rule for any future diagnostic `Strategy`, regardless of
+     whether it contains any actual entry logic: use `autoEntry=true,
+     manualEntry=false, supportsPositionType=false` (or leave
+     `supportsPositionType` unset — same thing).** `autoEntry=true` only
+     *permits* this class's own code to auto-enter; it does not place an
+     order by itself, and a class with no `buy`/`sell` call anywhere has
+     nothing for that permission to trigger — confirmed by two independent
+     full live sessions (`FlowStrategySkeleton`, `ContextRetentionProbe`)
+     with position/cash flat throughout. Do not "fix" `autoEntry=false` on
+     a diagnostic strategy without testing activation live first — the
+     comment-vs-code mismatch that caused this regression looked like an
+     obvious, safe cleanup and wasn't.
+
+- **[LIVE]** Q-02 stage (a) answered — **a retained `OrderContext` is
+  valid and safely callable (read-only) from a thread other than the one
+  that supplied it, with a stable identity across calls.**
+  `ContextRetentionProbe.java`, once activated cleanly (see the entry
+  above), logged `System.identityHashCode(ctx)` == `1581364256`
+  identically across `onActivate` (platform thread `TaskQueue - 16`),
+  `onBarClose` (platform thread `Quote Consumer 1 ...`), and every 5s
+  `getPosition()`/`getCashBalance()` poll from this class's own background
+  thread (`flow-diag-ctx-poller`) — no exceptions, `pos=0`/`cash=99850.0`
+  unchanged throughout. This is a single long-lived handle, not a fresh
+  wrapper per callback, at least for read-only calls. **Does not by itself
+  prove write calls (`buy`/`sell`) are safe off-thread** — only read
+  methods were exercised, per the Q-02(a) zero-risk design in
+  `FLOW_V2/docs/dynamic/decisions.md`. Q-02 stage (b) (a real order
+  placement test) remains optional per its original "only if (a) is
+  inconclusive" framing — (a) was not inconclusive — but D-17's flush
+  point still can't assume *write* safety off-thread from this evidence
+  alone; the safe default (flush at the top of the next platform callback)
+  should stand unless stage (b) is deliberately run later.

@@ -20,25 +20,32 @@ import java.util.concurrent.TimeUnit;
  *
  * HARD RULE (see ../../CLAUDE.md): this class contains NO call to
  * buy/sell/closeAtMarket/submitOrders/createMarketOrder/createLimitOrder/
- * createStopOrder or any other order-placement method, anywhere.
- * `autoEntry=false` and `manualEntry=false` below so the Strategy Control
- * Box doesn't even offer an entry option. Every inherited OrderContext-
- * taking lifecycle hook is explicitly overridden with a log-only,
- * read-only body -- per the 2026-09-11 incident (findings.md), omitting a
- * hook is not the same as it being safe, since MotiveWave's base class
- * default for onEnterNow places a real market order.
+ * createStopOrder or any other order-placement method, anywhere. Every
+ * inherited OrderContext-taking lifecycle hook is explicitly overridden
+ * below with a log-only, read-only body -- per the 2026-09-11 incident
+ * (findings.md), omitting a hook is not the same as it being safe, since
+ * MotiveWave's base class default for onEnterNow places a real market
+ * order.
  *
- * 2026-09-14: `supportsEnterOnActivate` and `supportsCloseOnDeactivate`
- * BOTH DEFAULT TO TRUE in StudyHeader if left unset -- these are
- * platform-level trading options ("Enter On Activate" / "Close On
- * Deactivate" in the Trading Options panel) that place/close a position
- * as a side effect of clicking Activate/Deactivate, entirely independent
- * of what this class's Java code does. Discovered live: activating with
- * these unset prompted for a Long/Short direction choice before allowing
- * activation, which would have opened a position on Activate with zero
- * order-placement code in this file. Both are explicitly set to `false`
- * below for the same reason `onEnterNow` is no-op'd -- an unset default
- * is not a safe default.
+ * StudyHeader flags (settled 2026-09-14 after live back-and-forth -- see
+ * findings.md for the full trail, including two wrong turns): `autoEntry
+ * =true` permits this class's OWN code to auto-enter; it does not itself
+ * place an order, and this class contains no buy/sell call for it to
+ * trigger. `autoEntry=false` combined with `manualEntry=false` was tried
+ * first and turned out to be an unsupported combination -- MotiveWave's
+ * Activate flow demanded a Long/Short choice with no actual chooser to
+ * satisfy it (a dead end). Setting `supportsPositionType=true` was tried
+ * next and did NOT fix it either (still hit the same dead end even with
+ * Position Type explicitly set to "Long" in the Add dialog) -- confirming
+ * the real cause was the autoEntry/manualEntry combination, not Position
+ * Type, so `supportsPositionType` reverts to `false` (its default) here.
+ * `manualEntry` stays `false` (no manual entry buttons offered).
+ * `supportsEnterOnActivate=false` / `supportsCloseOnDeactivate=false`
+ * stay explicitly set -- both default to `true` if left unset, and "Enter
+ * On Activate" places a position as a platform-level side effect of
+ * clicking Activate, independent of this file's Java code (though moot
+ * here in practice, since this class's own onActivate never checks
+ * `getSettings().isEnterOnActivate()` or calls buy/sell either way).
  *
  * Purpose (FLOW_V2 Q-02 stage (a), docs/dynamic/decisions.md): can an
  * OrderContext captured in onActivate be retained and used later, and from
@@ -60,7 +67,7 @@ import java.util.concurrent.TimeUnit;
     menu = "FLOW",
     overlay = true,
     strategy = true,
-    autoEntry = false,
+    autoEntry = true,
     manualEntry = false,
     supportsPositionType = false,
     supportsEnterOnActivate = false,

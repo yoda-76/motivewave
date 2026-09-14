@@ -20,32 +20,35 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * HARD RULE (see ../../CLAUDE.md): this class contains NO call to
  * buy/sell/closeAtMarket/submitOrders/createMarketOrder/createLimitOrder/
- * createStopOrder or any other order-placement method, anywhere. Activating
- * it in MotiveWave cannot place an order under any circumstance, regardless
- * of what the user clicks in the Strategy Control Box -- autoEntry and
- * manualEntry are both declared false below so MotiveWave doesn't even offer
- * an "enter on activate" option for it.
+ * createStopOrder or any other order-placement method, anywhere. Every
+ * OrderContext-taking lifecycle hook is explicitly overridden below with a
+ * log-only body, so there is no inherited default left unaccounted for --
+ * see the 2026-09-11 incident in docs/dynamic/findings.md: the base Study
+ * class's onEnterNow(OrderContext) is concrete, not abstract, and its
+ * default implementation places a real market order when the Strategy
+ * Control Box's "Enter Now" button is pressed, regardless of
+ * autoEntry/manualEntry and regardless of whether a subclass overrides it.
+ * Omitting an override is NOT the same as it being safe.
  *
- * 2026-09-11 incident (see docs/dynamic/findings.md): the base Study class's
- * onEnterNow(OrderContext) is concrete, not abstract, and its default
- * implementation places a real market order when the Strategy Control Box's
- * "Enter Now" button is pressed -- regardless of autoEntry/manualEntry flags,
- * and regardless of whether a subclass overrides it. Omitting an override is
- * NOT the same as it being safe. Every OrderContext-taking lifecycle hook is
- * therefore explicitly overridden below with a log-only body, so there is no
- * inherited default left unaccounted for.
- *
- * 2026-09-14 fix: `autoEntry` had been left `true` (contradicting this
- * comment, which already claimed it was `false` -- a stale/incorrect
- * comment, now corrected in code) and `supportsEnterOnActivate` /
- * `supportsCloseOnDeactivate` had been left unset, which defaults BOTH to
- * `true` in StudyHeader. "Enter On Activate" places a position as a
+ * StudyHeader flags (settled 2026-09-14 after live back-and-forth --
+ * see findings.md for the full trail): `autoEntry=true` permits this
+ * class's OWN code to auto-enter; it does not itself place an order, and
+ * this class contains no buy/sell call for it to trigger, so it stays
+ * true -- this exact combination (autoEntry=true, manualEntry=false, no
+ * Position Type override) was already run for a full live session with
+ * pos=0/cash flat throughout (strategy_skeleton.log). `autoEntry=false`
+ * combined with `manualEntry=false` was tried and turned out to be an
+ * unsupported combination: MotiveWave's Activate flow demanded a Long/Short
+ * choice with no actual chooser to satisfy it (a dead end), regardless of
+ * `supportsPositionType`. `manualEntry=false` stays false (no manual
+ * entry buttons offered). `supportsEnterOnActivate=false` and
+ * `supportsCloseOnDeactivate=false` stay explicitly set -- both default to
+ * `true` if left unset, and "Enter On Activate" places a position as a
  * platform-level side effect of clicking Activate, independent of this
- * file's Java code -- discovered live on a sibling probe
- * (`ContextRetentionProbe.java`) when activation prompted for a Long/Short
- * direction choice before allowing activation. All three flags are now
- * explicitly `false`, same rationale as the `onEnterNow` no-op below: an
- * unset default is not a safe default.
+ * file's Java code (though moot here in practice, since this class's own
+ * onActivate never checks `getSettings().isEnterOnActivate()` or calls
+ * buy/sell either way -- see the SDK's own SampleMACrossStrategy.java for
+ * the pattern that setting actually depends on).
  *
  * Purpose: prove the Strategy lifecycle (onActivate/onBarClose/onDeactivate)
  * fires correctly and that OrderContext account state (position, cash,
@@ -63,7 +66,7 @@ import java.util.concurrent.atomic.AtomicLong;
     menu = "FLOW",
     overlay = true,
     strategy = true,
-    autoEntry = false,
+    autoEntry = true,
     manualEntry = false,
     supportsPositionType = false,
     supportsEnterOnActivate = false,
