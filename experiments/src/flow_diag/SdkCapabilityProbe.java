@@ -243,6 +243,26 @@ public class SdkCapabilityProbe extends Study implements DOMListener {
 
   @Override
   public void onBarClose(DataContext ctx) {
+    // E-2: draw session POC/VAH/VAL here, not from the heartbeat thread --
+    // every real published study that draws figures does so from inside a
+    // MotiveWave-invoked callback (calculateValues/onBarUpdate), never
+    // from an independently spawned thread. onBarClose is that same kind
+    // of callback in this class already (used for E-4/E-7 below without
+    // any threading issue), so this reuses a proven-safe call site rather
+    // than introducing a new one via invokeLater.
+    VolumeProfile sp = sessionProfile;
+    if (sp != null) {
+      try {
+        VolumeRow poc = sp.getPOC();
+        int[] va = sp.getValueArea(VALUE_AREA_PCT);
+        if (poc != null && va != null) {
+          drawSessionLines(poc.getRowPrice(), sp.getVAHigh(va), sp.getVALow(va));
+        }
+      } catch (Throwable t) {
+        logLine("E2_DRAW_SNAPSHOT_EXCEPTION " + t);
+      }
+    }
+
     // E-4: finalize the closing bar's footprint profile
     VolumeProfile closingBar = barProfile;
     if (closingBar != null) {
@@ -261,7 +281,7 @@ public class SdkCapabilityProbe extends Study implements DOMListener {
         StringBuilder sb = new StringBuilder("E7_SWINGS strength=").append(strength)
             .append(" count=").append(swings == null ? 0 : swings.size());
         if (swings != null) {
-          for (SwingPoint sp : swings) indexes.add(sp.getIndex());
+          for (SwingPoint swp : swings) indexes.add(swp.getIndex());
         }
         Set<Integer> prev = lastSwingIndexesByStrength.get(strength);
         if (prev != null) {
@@ -356,9 +376,7 @@ public class SdkCapabilityProbe extends Study implements DOMListener {
               sp.getRows() == null ? 0 : sp.getRows().size(),
               poc == null ? "null" : String.format("%.4f", poc.getRowPrice()),
               vaHigh, vaLow, sp.getTotalVolume(), sp.getTotalDelta()));
-          if (poc != null && va != null) {
-            drawSessionLines(poc.getRowPrice(), vaHigh, vaLow);
-          }
+          // drawing happens from onBarClose, not here -- see that method for why
         } catch (Throwable t) {
           logLine("E2_SNAPSHOT_EXCEPTION " + t);
         }
@@ -391,37 +409,27 @@ public class SdkCapabilityProbe extends Study implements DOMListener {
   // timestamps by hand. Re-drawn every heartbeat under a fixed tag so old
   // lines are replaced, not accumulated.
   //
-  // Called from the heartbeat thread (not a MotiveWave callback thread),
-  // so the actual figure mutation is marshaled onto the Swing EDT via
-  // invokeLater. Every real published study that draws figures (checked
-  // in MotiveWave/motivewave-studies: LinearRegression, PriceLabels,
-  // SwingPoints, DarvasBox, ZigZag) calls addFigure from inside
-  // calculateValues()/onBarUpdate() -- MotiveWave's own callback thread --
-  // never from an independently spawned background thread, and none of
-  // them call notifyRedraw() explicitly either. MotiveWave's UI is
-  // Swing-based; a background thread touching figures is a classic EDT
-  // violation that fails silently (no exception, nothing rendered)
-  // rather than throwing -- which is exactly what was observed live
-  // (three redeploy/restart cycles, zero exceptions logged, nothing ever
-  // drawn) before this fix.
+  // Called from onBarClose (a MotiveWave-invoked callback), not from the
+  // heartbeat thread -- an invokeLater-marshaled call from the heartbeat
+  // thread was tried first and still rendered nothing, zero exceptions
+  // either way. Matches the pattern actually used by every real published
+  // study checked in MotiveWave/motivewave-studies (LinearRegression,
+  // PriceLabels, SwingPoints, DarvasBox, ZigZag): plain clearFigures()/
+  // addFigure(Figure) -- NOT the tagged addFigure(String, Figure)
+  // overload used in the first two attempts, which has no confirmed
+  // precedent anywhere in MotiveWave's own source -- called synchronously
+  // from inside calculateValues()/onBarUpdate(), with no notifyRedraw()
+  // call in any of them.
   private void drawSessionLines(float poc, float vaHigh, float vaLow) {
-    javax.swing.SwingUtilities.invokeLater(() -> {
-      try {
-        beginFigureUpdate();
-        try {
-          clearFigures("e2_lines");
-          long now = System.currentTimeMillis();
-          addFigure("e2_lines", makeLine(sessionStartTime, poc, now, poc, Color.YELLOW, "OUR POC " + poc));
-          addFigure("e2_lines", makeLine(sessionStartTime, vaHigh, now, vaHigh, Color.CYAN, "OUR VAH " + vaHigh));
-          addFigure("e2_lines", makeLine(sessionStartTime, vaLow, now, vaLow, Color.CYAN, "OUR VAL " + vaLow));
-        } finally {
-          endFigureUpdate();
-        }
-        notifyRedraw();
-      } catch (Throwable t) {
-        logLine("E2_DRAW_EXCEPTION " + t);
-      }
-    });
+    try {
+      clearFigures();
+      long now = System.currentTimeMillis();
+      addFigure(makeLine(sessionStartTime, poc, now, poc, Color.YELLOW, "OUR POC " + poc));
+      addFigure(makeLine(sessionStartTime, vaHigh, now, vaHigh, Color.CYAN, "OUR VAH " + vaHigh));
+      addFigure(makeLine(sessionStartTime, vaLow, now, vaLow, Color.CYAN, "OUR VAL " + vaLow));
+    } catch (Throwable t) {
+      logLine("E2_DRAW_EXCEPTION " + t);
+    }
   }
 
   private Line makeLine(long startTime, double startValue, long endTime, double endValue, Color color, String label) {
