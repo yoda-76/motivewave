@@ -449,21 +449,59 @@ public class SdkCapabilityProbe extends Study implements DOMListener {
         addFigure(makeLine(sessionStartTime, vaLow, now, vaLow, Color.CYAN, "OUR VAL " + vaLow));
       }
       if (lvns != null && rows != null) {
-        for (int idx : lvns) {
-          if (idx < 0 || idx >= rows.size()) {
-            logLine("LVN_INDEX_OUT_OF_RANGE idx=" + idx + " rowCount=" + rows.size());
-            continue;
-          }
-          VolumeRow row = rows.get(idx);
-          Box box = new Box(sessionStartTime, row.getStartPrice(), now, row.getEndPrice());
-          box.setFillColor(LVN_FILL);
-          box.setLineColor(LVN_FILL);
-          addFigure(box);
-        }
+        drawLvnClusters(rows, lvns, sessionStartTime, now);
       }
     } catch (Throwable t) {
       logLine("E2_DRAW_EXCEPTION " + t);
     }
+  }
+
+  // Individual LVN rows drawn one box each turned into a near-continuous
+  // stripe covering most of the profile (confirmed live -- almost every
+  // other row qualifies at LVN_SENSITIVITY=1, not a useful signal at that
+  // granularity). Only draw a box for a CLUSTER of more than 2 adjacent
+  // LVN rows, merged into one box spanning the cluster's full price band
+  // -- that's the actual low-volume *zone* signal, not each thin row.
+  private static final int MIN_CLUSTER_SIZE = 3; // ">2 rectangles" per the request
+  private void drawLvnClusters(List<VolumeRow> rows, int[] lvnIndices, long startTime, long endTime) {
+    int[] sorted = lvnIndices.clone();
+    java.util.Arrays.sort(sorted);
+
+    int clusterStart = -1;
+    int prevIdx = Integer.MIN_VALUE;
+    for (int i = 0; i <= sorted.length; i++) {
+      int idx = i < sorted.length ? sorted[i] : Integer.MIN_VALUE; // sentinel to flush the last cluster
+      boolean contiguous = i < sorted.length && idx == prevIdx + 1;
+      if (!contiguous) {
+        if (clusterStart >= 0) {
+          int clusterEndIdx = prevIdx; // last index of the cluster just ended
+          int size = clusterEndIdx - clusterStart + 1;
+          if (size >= MIN_CLUSTER_SIZE) {
+            drawLvnClusterBox(rows, clusterStart, clusterEndIdx, startTime, endTime);
+          }
+        }
+        clusterStart = (i < sorted.length && idx >= 0 && idx < rows.size()) ? idx : -1;
+      }
+      prevIdx = idx;
+    }
+  }
+
+  private void drawLvnClusterBox(List<VolumeRow> rows, int fromIdx, int toIdx, long startTime, long endTime) {
+    if (fromIdx < 0 || toIdx >= rows.size() || fromIdx > toIdx) {
+      logLine("LVN_CLUSTER_INDEX_OUT_OF_RANGE from=" + fromIdx + " to=" + toIdx + " rowCount=" + rows.size());
+      return;
+    }
+    double lo = Double.MAX_VALUE, hi = -Double.MAX_VALUE;
+    for (int i = fromIdx; i <= toIdx; i++) {
+      VolumeRow row = rows.get(i);
+      lo = Math.min(lo, Math.min(row.getStartPrice(), row.getEndPrice()));
+      hi = Math.max(hi, Math.max(row.getStartPrice(), row.getEndPrice()));
+    }
+    Box box = new Box(startTime, lo, endTime, hi);
+    box.setFillColor(LVN_FILL);
+    box.setLineColor(LVN_FILL);
+    addFigure(box);
+    logLine("LVN_CLUSTER fromIdx=" + fromIdx + " toIdx=" + toIdx + " size=" + (toIdx - fromIdx + 1) + " lo=" + lo + " hi=" + hi);
   }
 
   private Line makeLine(long startTime, double startValue, long endTime, double endValue, Color color, String label) {
