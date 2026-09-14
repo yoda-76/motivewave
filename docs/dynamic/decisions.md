@@ -32,6 +32,22 @@ experimentation continues.
   visual studies, so the actual imbalance/absorption logic can match what's
   already used discretionarily.
 
+  **Amended 2026-09-15**: "built from raw Tick/DOM SDK data rather than
+  the built-in visual studies" still holds exactly as stated — no reading
+  of another study's rendered output, ever (confirmed structurally
+  impossible anyway, see the 2026-09-14/15 `[LIVE]` entries below). What
+  changed, via `../FLOW_V2/docs/dynamic/sdk-capability-findings.md`'s
+  live-verified audit: volume profile, footprint, delta, and big trades
+  don't need their *accumulation logic* hand-built from that raw data
+  either — the SDK ships reusable engine classes
+  (`sdk.profile.VolumeProfile`, `sdk.common.AggregateFilter`) that take
+  the exact same raw `Tick` stream this decision already committed to,
+  and were confirmed live to produce accurate output. Liquidity map
+  remains fully custom (no equivalent SDK engine exists for MBO-depth
+  heatmaps); market structure/swings gets a documented primitive
+  (`DataSeries.calcSwingPoints`) to build interpretation on top of, not a
+  finished feature.
+
 - **D-05** (2026-09-11) — Build with a portable Temurin JDK (matching
   MotiveWave's bundled runtime major version, currently 26) unzipped into
   `tools/`, not a system-wide JDK install. No admin rights needed, no PATH
