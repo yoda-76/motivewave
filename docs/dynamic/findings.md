@@ -314,3 +314,21 @@ directly). Same convention as FLOW's findings.md.
   point still can't assume *write* safety off-thread from this evidence
   alone; the safe default (flush at the top of the next platform callback)
   should stand unless stage (b) is deliberately run later.
+
+- **[LIVE]** Q-08 answered — **the built-in Volume Profile study does not
+  expose POC/VAH/VAL through either mechanism checked, on a live chart.**
+  With the built-in Volume Profile study already on a `@GC` chart: (1) an
+  EMA(20) added alongside it has an Input dropdown offering only
+  Open/Close/Midpoint/High/Low/Typical Price/Weighted Price — nothing
+  Volume-Profile-derived, confirming no Export Value from Volume Profile
+  reaches another study's Input selector. (2) Right-clicking empty chart
+  space offers "Add Alert at `<price>`" — a generic price-level alert.
+  Right-clicking directly **on the Volume Profile plot itself** gives a
+  completely different, plot-specific context menu (Show Fill, Show Value
+  Area, Show Bid/Ask, Display Side, Format, Duplicate, Lock Figure, Hide,
+  Properties, etc.) with **no Create/Add Alert entry anywhere in it** —
+  so the Study Alert mechanism (`pages/…motivewave-docs.md` line ~3642,
+  "Relative Comparison") isn't reachable for it either, at least not via
+  this menu. Net: `BuiltInVolumeProfile` (D-26) is **not** automatic.
+  D-26's stated fallback applies — journal `CustomVolumeProfile`'s own
+  POC/VAH/VAL on a cadence and compare against the chart by hand.
