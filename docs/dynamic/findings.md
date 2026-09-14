@@ -585,3 +585,27 @@ directly). Same convention as FLOW's findings.md.
   every existing instance of a diagnostic study before re-adding it**,
   and check the log for multiple concurrently-active instance IDs before
   trusting any single reading as "the" current value.
+
+- **[LIVE]** E-2 (VolumeProfile parity) — **confirmed close match against
+  the chart, once both are scoped to the same window.** First comparison
+  (default settings, `rangeTicks=1`, 70% value area) showed VAL matching
+  exactly (4348.5 both) but VAH off by 0.3 (ours 4350.8 vs. chart's
+  4351.1). Root cause found live, not guessed: the built-in Volume
+  Profile study had **"Use Historical Bars" enabled**, which extends its
+  lookback further back than our probe's session (our `VolumeProfile`
+  only accumulates from when the study was attached, per its own
+  constructor's `startTime`). Turning "Use Historical Bars" off on the
+  built-in study — so both are scoped to roughly the same live-only
+  window — brought them into close agreement (`OUR POC 4348.6` sitting
+  directly on the built-in histogram's POC-highlighted bar, `OUR VAH
+  4349.2` closely tracking the value-area shading boundary). **Net: the
+  SDK's `sdk.profile.VolumeProfile` engine produces output consistent
+  with the built-in study's own algorithm** once the accumulation window
+  is apples-to-apples — meaningful given E-10 found zero reference usage
+  of this class anywhere in MotiveWave's own published studies, so this
+  is now live confirmation the class itself is trustworthy, independent
+  of that gap. Exact row size (`rangeTicks`) and value-area % still not
+  confirmed to match the chart's own settings precisely — the numbers
+  are close, not verified identical under matched settings — worth a
+  closer pass if exact parity ever matters more than "close enough to
+  trust the engine."
