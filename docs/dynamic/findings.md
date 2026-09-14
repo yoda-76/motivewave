@@ -440,6 +440,12 @@ directly). Same convention as FLOW's findings.md.
   signatures exist, but not that they behave sanely at runtime; that's
   still pending.
 
+  **Second T-6 mismatch found while writing `SdkCapabilityProbe.java`
+  (the E-2/3/4/5/7/8/9 combined probe):** `DOMSnapshot.getBidPrices()`/
+  `getAskPrices()` return `float[]`, not `double[]` as the field/method
+  naming convention elsewhere in the SDK would suggest. Fixed at the call
+  site; noted here so the next person doesn't re-discover it.
+
 - **[LIVE]** E-10 (studies source bundle) — found a better source than the
   Google Drive link the forum thread names: the official **`MotiveWave/
   motivewave-studies`** GitHub repo (`https://github.com/MotiveWave/
