@@ -366,11 +366,17 @@ public class SdkCapabilityProbe extends Study implements DOMListener {
   // lines are replaced, not accumulated.
   private void drawSessionLines(float poc, float vaHigh, float vaLow) {
     try {
-      clearFigures("e2_lines");
-      long now = System.currentTimeMillis();
-      addFigure("e2_lines", makeLine(sessionStartTime, poc, now, poc, Color.YELLOW, "OUR POC " + poc));
-      addFigure("e2_lines", makeLine(sessionStartTime, vaHigh, now, vaHigh, Color.CYAN, "OUR VAH " + vaHigh));
-      addFigure("e2_lines", makeLine(sessionStartTime, vaLow, now, vaLow, Color.CYAN, "OUR VAL " + vaLow));
+      beginFigureUpdate();
+      try {
+        clearFigures("e2_lines");
+        long now = System.currentTimeMillis();
+        addFigure("e2_lines", makeLine(sessionStartTime, poc, now, poc, Color.YELLOW, "OUR POC " + poc));
+        addFigure("e2_lines", makeLine(sessionStartTime, vaHigh, now, vaHigh, Color.CYAN, "OUR VAH " + vaHigh));
+        addFigure("e2_lines", makeLine(sessionStartTime, vaLow, now, vaLow, Color.CYAN, "OUR VAL " + vaLow));
+      } finally {
+        endFigureUpdate();
+      }
+      notifyRedraw(); // addFigure alone does not trigger a repaint -- confirmed via Javadoc, found live
     } catch (Throwable t) {
       logLine("E2_DRAW_EXCEPTION " + t);
     }
