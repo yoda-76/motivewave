@@ -390,22 +390,38 @@ public class SdkCapabilityProbe extends Study implements DOMListener {
   // built-in Volume Profile study directly, instead of matching log
   // timestamps by hand. Re-drawn every heartbeat under a fixed tag so old
   // lines are replaced, not accumulated.
+  //
+  // Called from the heartbeat thread (not a MotiveWave callback thread),
+  // so the actual figure mutation is marshaled onto the Swing EDT via
+  // invokeLater. Every real published study that draws figures (checked
+  // in MotiveWave/motivewave-studies: LinearRegression, PriceLabels,
+  // SwingPoints, DarvasBox, ZigZag) calls addFigure from inside
+  // calculateValues()/onBarUpdate() -- MotiveWave's own callback thread --
+  // never from an independently spawned background thread, and none of
+  // them call notifyRedraw() explicitly either. MotiveWave's UI is
+  // Swing-based; a background thread touching figures is a classic EDT
+  // violation that fails silently (no exception, nothing rendered)
+  // rather than throwing -- which is exactly what was observed live
+  // (three redeploy/restart cycles, zero exceptions logged, nothing ever
+  // drawn) before this fix.
   private void drawSessionLines(float poc, float vaHigh, float vaLow) {
-    try {
-      beginFigureUpdate();
+    javax.swing.SwingUtilities.invokeLater(() -> {
       try {
-        clearFigures("e2_lines");
-        long now = System.currentTimeMillis();
-        addFigure("e2_lines", makeLine(sessionStartTime, poc, now, poc, Color.YELLOW, "OUR POC " + poc));
-        addFigure("e2_lines", makeLine(sessionStartTime, vaHigh, now, vaHigh, Color.CYAN, "OUR VAH " + vaHigh));
-        addFigure("e2_lines", makeLine(sessionStartTime, vaLow, now, vaLow, Color.CYAN, "OUR VAL " + vaLow));
-      } finally {
-        endFigureUpdate();
+        beginFigureUpdate();
+        try {
+          clearFigures("e2_lines");
+          long now = System.currentTimeMillis();
+          addFigure("e2_lines", makeLine(sessionStartTime, poc, now, poc, Color.YELLOW, "OUR POC " + poc));
+          addFigure("e2_lines", makeLine(sessionStartTime, vaHigh, now, vaHigh, Color.CYAN, "OUR VAH " + vaHigh));
+          addFigure("e2_lines", makeLine(sessionStartTime, vaLow, now, vaLow, Color.CYAN, "OUR VAL " + vaLow));
+        } finally {
+          endFigureUpdate();
+        }
+        notifyRedraw();
+      } catch (Throwable t) {
+        logLine("E2_DRAW_EXCEPTION " + t);
       }
-      notifyRedraw(); // addFigure alone does not trigger a repaint -- confirmed via Javadoc, found live
-    } catch (Throwable t) {
-      logLine("E2_DRAW_EXCEPTION " + t);
-    }
+    });
   }
 
   private Line makeLine(long startTime, double startValue, long endTime, double endValue, Color color, String label) {
