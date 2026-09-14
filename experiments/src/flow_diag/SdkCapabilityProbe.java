@@ -12,11 +12,14 @@ import com.motivewave.platform.sdk.common.Instrument;
 import com.motivewave.platform.sdk.common.SwingPoint;
 import com.motivewave.platform.sdk.common.Tick;
 import com.motivewave.platform.sdk.common.TickOperation;
+import com.motivewave.platform.sdk.draw.Line;
 import com.motivewave.platform.sdk.profile.VolumeProfile;
 import com.motivewave.platform.sdk.profile.VolumeRow;
 import com.motivewave.platform.sdk.study.Study;
 import com.motivewave.platform.sdk.study.StudyHeader;
 
+import java.awt.Color;
+import java.awt.Font;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintWriter;
@@ -82,6 +85,7 @@ public class SdkCapabilityProbe extends Study implements DOMListener {
   private final AtomicLong sessionTickCount = new AtomicLong(0);
   private final AtomicLong sessionProcessingNanos = new AtomicLong(0);
   private volatile long baselineHeapBytes = -1;
+  private volatile long sessionStartTime;
 
   // E-4: bar-scoped footprint profile
   private volatile VolumeProfile barProfile;
@@ -124,6 +128,7 @@ public class SdkCapabilityProbe extends Study implements DOMListener {
       instrument = ctx.getInstrument();
       instrument.addListener(this);
       long now = System.currentTimeMillis();
+      sessionStartTime = now;
       sessionProfile = new VolumeProfile(now, now + 12L * 3600_000L, instrument, RANGE_TICKS);
       logLine("SUBSCRIBED symbol=" + instrument.getSymbol() + " tickSize=" + instrument.getTickSize());
 
@@ -325,6 +330,9 @@ public class SdkCapabilityProbe extends Study implements DOMListener {
               sp.getRows() == null ? 0 : sp.getRows().size(),
               poc == null ? "null" : String.format("%.4f", poc.getRowPrice()),
               vaHigh, vaLow, sp.getTotalVolume(), sp.getTotalDelta()));
+          if (poc != null && va != null) {
+            drawSessionLines(poc.getRowPrice(), vaHigh, vaLow);
+          }
         } catch (Throwable t) {
           logLine("E2_SNAPSHOT_EXCEPTION " + t);
         }
@@ -350,6 +358,30 @@ public class SdkCapabilityProbe extends Study implements DOMListener {
     } catch (Throwable t) {
       logLine("HEARTBEAT_EXCEPTION " + t);
     }
+  }
+
+  // E-2, drawn on the chart so it can be visually compared against the
+  // built-in Volume Profile study directly, instead of matching log
+  // timestamps by hand. Re-drawn every heartbeat under a fixed tag so old
+  // lines are replaced, not accumulated.
+  private void drawSessionLines(float poc, float vaHigh, float vaLow) {
+    try {
+      clearFigures("e2_lines");
+      long now = System.currentTimeMillis();
+      addFigure("e2_lines", makeLine(sessionStartTime, poc, now, poc, Color.YELLOW, "OUR POC " + poc));
+      addFigure("e2_lines", makeLine(sessionStartTime, vaHigh, now, vaHigh, Color.CYAN, "OUR VAH " + vaHigh));
+      addFigure("e2_lines", makeLine(sessionStartTime, vaLow, now, vaLow, Color.CYAN, "OUR VAL " + vaLow));
+    } catch (Throwable t) {
+      logLine("E2_DRAW_EXCEPTION " + t);
+    }
+  }
+
+  private Line makeLine(long startTime, double startValue, long endTime, double endValue, Color color, String label) {
+    Line line = new Line(startTime, startValue, endTime, endValue);
+    line.setColor(color);
+    line.setExtendRightBounds(true);
+    line.setText(label, new Font("Dialog", Font.PLAIN, 11));
+    return line;
   }
 
   private void logLine(String s) {
