@@ -609,3 +609,51 @@ directly). Same convention as FLOW's findings.md.
   are close, not verified identical under matched settings — worth a
   closer pass if exact parity ever matters more than "close enough to
   trust the engine."
+
+## 2026-09-15
+
+- **[LIVE]** E-3 (VolumeProfile memory/throughput) — **first clean
+  single-instance measurement, and the result is more serious than "heap
+  growth stayed modest."** Prior runs were contaminated by duplicate/
+  zombie instances (old log archived as
+  `experiments/logs/sdk_capability_probe.log.bak.20260915_201849` — it
+  showed two instances logging concurrently, one spinning `E7_SWINGS`/
+  `E4_BAR_CLOSE` lines ~100ms apart, clearly a runaway zombie). Redeployed
+  fresh, ran one instance (`inst=84012221`) on a live `@GC` chart for
+  ~11 minutes (`SUBSCRIBED` to last heartbeat: 1789484617714 →
+  1789485277717 ms).
+
+  **The T-1 memory guard (300 MB growth) tripped in ~220 seconds, at only
+  317 ticks** — `E3_T1_GUARD_TRIPPED growth=374950960 ticks=317`, i.e.
+  roughly **1.1–1.2 MB retained per tick** while it was accumulating
+  (0 growth at tick 30 → 375 MB growth at tick 317). Session tick rate
+  over the run averaged ~1.5 ticks/sec (978 ticks / ~660s), so a full RTH
+  session (~6.5 hrs, ~35,000 ticks at this rate) extrapolates to roughly
+  **35-40 GB retained** if fed unbounded — not viable. This is a live
+  confirmation of the concern `sdk-capability-findings.md` §"if
+  `getAskTrades()`/`getBidTrades()` retain everything, this is a serious
+  memory problem" flagged as a risk to check — it's now checked, and the
+  risk is real: `VolumeRow` appears to retain something proportional to
+  raw tick volume per row (consistent with each row holding its own
+  ask/bid trade lists), not just aggregated totals, regardless of
+  whether callers ever call the trade-list accessors.
+
+  Processing speed is not the concern — cumulative
+  `avgProcessingMicrosPerTick` fell from ~19µs (first heartbeat, JIT
+  warm-up) to ~1.2µs by the end of the run, comfortably fast. The T-1
+  guard itself worked exactly as designed: it stopped feeding the
+  session profile at the trip point rather than letting the JVM run out
+  of heap, so this run is a safe, bounded measurement of the growth rate,
+  not a heap-exhaustion incident.
+
+  **Practical implication:** a session-scoped `VolumeProfile` fed every
+  tick for a full session, kept alive the whole time, is not safe as-is.
+  Options for `VolumeProfileView` (not decided yet — this is evidence for
+  the upcoming features/triggers discussion, not a decision): periodic
+  reset/rotation of the underlying `VolumeProfile` instance, pulling only
+  aggregated fields (`getPOC()`/`getValueArea()`/`getTotalVolume()`/
+  `getTotalDelta()`) and discarding+recreating the object on a cadence
+  rather than trusting it to stay small on its own, or bounding row count/
+  tick retention some other way. Confirms this needs to be part of the
+  features/triggers discussion before `VolumeProfileView` gets built
+  (D-37), not an afterthought.
