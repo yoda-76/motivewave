@@ -657,3 +657,55 @@ directly). Same convention as FLOW's findings.md.
   tick retention some other way. Confirms this needs to be part of the
   features/triggers discussion before `VolumeProfileView` gets built
   (D-37), not an afterthought.
+
+## 2026-09-17
+
+- **[LIVE]** Platform-level feed stall, not a FLOW_V2 bug — `@GC`
+  stopped printing candles entirely for a period (confirmed by the user
+  directly: "no candles were printing" on the chart itself, not specific
+  to any study). A `level_zone_observer` session running at the time saw
+  ~7 minutes of clock-only events (4238 `ClockEvent`s, zero ticks) before
+  being removed — consistent with the whole chart being stalled, not with
+  anything in `FlowRuntimeStudy`'s own ingestion path, since a platform
+  feed stall would starve every study on the chart identically. No root
+  cause investigated (reconnect? maintenance window? local network?) —
+  just recorded so a future "why are there zero ticks" moment checks the
+  chart itself first, not just the code. Session's own two-tier journal
+  correctly showed clock events accumulating with no ticks throughout,
+  rather than silently going quiet or erroring — that part worked as
+  designed.
+
+## 2026-09-18
+
+- **[LIVE]** `AggregateFilter.onTick(Tick)` casts its argument to an
+  internal concrete class, not just the `Tick` interface — confirmed by a
+  real `ClassCastException` the moment FLOW_V2's `TickAdapter` (a dynamic
+  `Proxy` implementing `Tick`, used to feed SDK engine classes from the
+  drain thread with our own already-converted `TickEvent`) fed it a live
+  tick: `class jdk.proxy2.$Proxy6 cannot be cast to class k.v ... loader
+  'app'`. This disarmed a live `level_zone_observer` session for its
+  entire duration (every event from seq 1 onward hit the same exception —
+  see FLOW_V2's `docs/dynamic/decisions.md` D-53) until the feature
+  feeding it was removed and the study reloaded.
+
+  **Real asymmetry between two SDK engine classes, not a proxy bug**:
+  `VolumeProfile.onTick(Tick)` has been live-confirmed working through
+  this exact same `TickAdapter` proxy pattern since D-44 (footprint too,
+  D-50) — many sessions, zero cast exceptions. `AggregateFilter` is the
+  first SDK engine class here that internally requires the platform's own
+  concrete `Tick` implementation rather than accepting any interface
+  implementer. E-5's earlier confirmation of `AggregateFilter` (this
+  document, `SdkCapabilityProbe.java`) never hit this because that probe
+  feeds it the *real* `Tick` object directly from `onTick(DataContext,
+  Tick)` on MotiveWave's own callback thread — it never goes through a
+  proxy or a re-sequenced event stream at all, unlike FLOW_V2's
+  architecture.
+
+  **Consequence for FLOW_V2, not decided here**: feeding `AggregateFilter`
+  the real `Tick` would only be possible from the platform callback
+  thread, which conflicts with the single-writer/drain-thread invariant
+  the whole feature layer relies on and would break replay-equivalence
+  (a realtime-arrival-order dependency the raw journal doesn't capture).
+  FLOW_V2's own `decisions.md` (D-53) records the system-level response:
+  big trades reimplemented directly against the already-recorded
+  `TickEvent` stream instead of wrapping this engine class at all.
