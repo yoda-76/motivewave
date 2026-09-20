@@ -709,3 +709,47 @@ directly). Same convention as FLOW's findings.md.
   FLOW_V2's own `decisions.md` (D-53) records the system-level response:
   big trades reimplemented directly against the already-recorded
   `TickEvent` stream instead of wrapping this engine class at all.
+
+## 2026-09-20
+
+- **[LIVE]** How much historical `@GC` 1-minute OHLC does `DataSeries`
+  actually make available? Raised by FLOW_V2's plain-OHLC market
+  structure backtest (`docs/dynamic/todo.md`), a system question needing
+  a platform answer first. `HistoricalDepthProbe.java` (`experiments/
+  src/flow_diag/`, read-only `Study`, same template as `OrderingProbe`)
+  logs `DataSeries.size()` plus earliest/latest bar time on the first
+  `calculate()` call and again whenever size changes.
+
+  Progression observed live, on a chart the user manually scrolled back
+  and with MotiveWave's own **Max Linear Bars** chart setting (Configure
+  > Settings > Chart > Chart > General) raised: 1,380 bars (~23 hours) →
+  10,296 (~9.4 days) after raising **Minimum Bars** (capped at 9999 in
+  the UI, though the series grew past that number anyway) and reopening
+  the chart → 12,417 (~11 days) after another reopen → **25,000 bars
+  exactly (~24.2 calendar days, 2026-08-25T15:34Z to 2026-09-18T21:00Z),
+  after manually scrolling the chart back until it stopped loading
+  further.**
+
+  **The ceiling is the client-side "Max Linear Bars" setting (25000 in
+  this account), not an independent data-provider wall** — the series
+  stopped at precisely that configured number, not some other lower
+  figure, strongly suggesting more history is available from the
+  backend if that setting is raised further (not yet tried — the user
+  chose to proceed with the ~24.2 days already reached rather than push
+  further). **Minimum Bars alone did not force the full backfill** —
+  the series only reached the setting's ceiling after an actual manual
+  scroll-back action, not from the setting change + reopen alone (which
+  only reached ~11 days). A bug in the probe itself was also found and
+  fixed live: its first version only rechecked `DataSeries.size()` on a
+  live `onBarClose`, so with the market closed over the weekend, a
+  manual scroll-back went completely undetected until the check was
+  moved to also fire from `calculate()` on the series' own current last
+  index — worth remembering for any future probe that needs to detect
+  passive/background state changes with no live event to hang a check on.
+
+  Consequence for FLOW_V2 (`decisions.md`, D-77): proceeding with
+  MotiveWave as the backtest's data source (the user's stated
+  preference, "if the data is provided i want to keep everything in
+  motivewave only") using the ~24.2 days reached, not the TradingView
+  fallback that was on the table if MotiveWave's own data had proven
+  insufficient.
