@@ -753,3 +753,68 @@ directly). Same convention as FLOW's findings.md.
   motivewave only") using the ~24.2 days reached, not the TradingView
   fallback that was on the table if MotiveWave's own data had proven
   insufficient.
+
+## 2026-09-22
+
+- **[DOC]** `OrderContext.closeAtMarket()`'s own Javadoc
+  (`docs/static/javadoc/.../order_mgmt/OrderContext.html`, `closeAtMarket()`
+  detail section): *"Closes the position held by this strategy. **This
+  method will wait until the market order(s) have been filled.**"* An
+  explicit, documented **blocking/synchronous** guarantee — the call does
+  not return until its own resulting order(s) are done. `cancelOrders()`'s
+  own Javadoc has no equivalent note (just "Cancels all of the open orders
+  for this strategy," no wait/blocking language at all).
+
+  **Consequence for FLOW_V2**: resolves `plumbingEdgeCases.md` §7 —
+  `OrderGateway.cancelAllAndClose()`'s `ctx.closeAtMarket()` →
+  `ctx.cancelOrders()` sequence cannot race the close order it just placed,
+  because `closeAtMarket()` has already returned only once that order is
+  filled, well before `cancelOrders()` (which only touches orders still
+  open) ever runs. **[DOC]-tier only, not yet live-confirmed** — per this
+  project's own "verify against the real thing before trusting docs"
+  discipline (`CLAUDE.md`), this should still get a live confirmation
+  before being treated as fully settled for a safety-critical mechanism
+  (the daily-loss kill switch, D-85 in FLOW_V2) — recorded as a strong
+  documented lead, not a live-verified fact, same distinction this file
+  already draws elsewhere (see the 2026-09-14 Sim Trade Only note above).
+
+- **[DOC]** `Order` (`docs/static/javadoc/.../order_mgmt/Order.html`)
+  explicitly models partial fills as a first-class concept:
+  `getFilled()`/`getFilledAsFloat()` (quantity filled *so far*, can be
+  less than the order's total requested quantity) and `isFilled()` (true
+  only once *fully* filled) are distinct methods. There is **no separate
+  "onOrderPartiallyFilled" callback** anywhere on `Study`'s hook list
+  (checked the full `on*` method inventory in
+  `docs/static/javadoc/.../study/Study.html`) — only `onOrderFilled`/
+  `onOrderCancelled`/`onOrderRejected`/`onOrderModified`. Whether
+  `onOrderFilled` fires once per partial fill or only once on full
+  resolution is **not stated anywhere in the Javadoc** and remains
+  genuinely unanswered — this needs a live order likely to partially fill
+  (e.g. a resting limit order against thin size) to observe directly.
+
+  **Consequence for FLOW_V2**: doesn't close `plumbingEdgeCases.md` §9's
+  underlying question, but strengthens the fix direction regardless of
+  the answer — `FlowRuntimeStudy.onOrderFilled()`'s bracket-sizing branch
+  has a real, SDK-exposed way to read the *actual* filled quantity
+  (`order.getFilled()`, or equivalently `gw.currentPosition()`) instead of
+  trusting the strategy's originally-requested size, and doing so is
+  correct whether `onOrderFilled` fires once or many times per order.
+
+- **[DOC, inconclusive]** No documentation anywhere in
+  `docs/static/` (Javadoc or the SDK Programming Guide) describes
+  callback threading/concurrency for `Study`'s order hooks at all — no
+  mention of whether `onOrderFilled`/`onOrderCancelled`/etc. are
+  serialized per account/instrument or could fire concurrently on
+  different threads (`plumbingEdgeCases.md` §10), and nothing about
+  whether `onActivate`'s `OrderContext` is guaranteed already-synced with
+  the real account state immediately after a platform restart/reconnect
+  (§10's cousin, §11). The one existing thread-identity finding in this
+  file (2026-09-12, Q-02 stage (a): `onActivate` on `TaskQueue - 16`,
+  `onBarClose` on `Quote Consumer 1 ...`) shows different hook *types* get
+  dispatched on different named threads, which is suggestive context but
+  says nothing about two *order-fill* callbacks specifically. **Both §10
+  and §11 remain open — genuinely need a live experiment**, not just more
+  reading; decompiling the client-side SDK jar wouldn't help either, since
+  the actual dispatch behavior for order/account events plausibly
+  originates from the broker connection's own network layer, not client
+  code visible in this jar at all.
